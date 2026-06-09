@@ -1,0 +1,3436 @@
+openapi: 3.0.3
+info:
+  title: Privcy AI - BFF API Swagger Documentation
+  description: |
+    This API serves as the Backend for Frontend layer of Privcy AI, enabling seamless integration between client applications and core privacy services. It provides endpoints for managing user profiles, DSAR (Data Subject Access Requests), data mapping, risk assessments, privacy insights, and request tracking, helping organizations streamline compliance and data privacy management.
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://privcy-ai-dev-alb-1604351693.eu-north-1.elb.amazonaws.com/gateway/api/v1
+    description: Dev Gateway
+
+tags:
+  - name: Health
+    description: Health and monitoring endpoints
+  - name: auth
+    description: Authentication and authorization operations
+  - name: sync
+    description: Email sync status and data readiness operations
+  - name: profiles
+    description: User profile management operations
+  - name: data-maps
+    description: Data mapping and risk assessment operations
+  - name: insights
+    description: Privacy insights and analytics dashboard
+  - name: companies
+    description: DSAR and privacy request management
+  - name: privacy-requests
+    description: Full DSAR / privacy request lifecycle management
+  - name: assistant
+    description: Nova-style proactive assistant feed (scripted rule engine, no LLM)
+  - name: data-purge
+    description: Self-DSAR derived-data erasure
+  - name: faqs
+    description: Frequently asked questions and help content
+  - name: business-directory
+    description: Business directory operations (same listing/filtering features as data-maps)
+
+paths:
+  /heart-beat:
+    get:
+      tags: [Health]
+      summary: Heart beat
+      description: Health check endpoint.
+      operationId: getHeartBeat
+      security: []
+      x-codeSamples:
+        - lang: curl
+          label: cURL
+          source: |
+            curl --request GET \
+              --url 'https://privcy-ai-dev-alb-1604351693.eu-north-1.elb.amazonaws.com/gateway/api/v1/heart-beat'
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeartBeatResponse"
+              examples:
+                healthy:
+                  summary: Example response
+                  value:
+                    status: ok
+                    commit_id: development
+
+  /api/v1/auth/google/signin:
+    post:
+      tags:
+        - auth
+      summary: Google Sign-In
+      description: |
+        Authenticate user with Google OAuth. For new users, this initiates email processing
+        and returns a task_id for polling sync status.
+
+        **Flow:**
+        1. Client sends Google serverAuthCode
+        2. Server exchanges code for tokens, creates/updates user
+        3. For new users: triggers email processing pipeline
+        4. Returns user info, tokens, and sync_status (if new user)
+      operationId: googleSignIn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GoogleSignInRequest"
+            example:
+              serverAuthCode: "4/0AX4XfWh..."
+              metadata:
+                device_type: "mobile"
+                device_name: "iPhone 14"
+      responses:
+        "200":
+          description: Successfully authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              examples:
+                new_user:
+                  summary: New user response (includes sync_status)
+                  value:
+                    status: "ok"
+                    data:
+                      user:
+                        id: "550e8400-e29b-41d4-a716-446655440000"
+                        email: "user@example.com"
+                        name: "John Doe"
+                        is_new_user: true
+                        onboarding_completed: false
+                        created_at: "2026-01-25T10:30:00Z"
+                      tokens:
+                        accessToken: "eyJhbGciOiJSUzI1NiIs..."
+                        refreshToken: "eyJjdHkiOiJKV1QiLCJl..."
+                        idToken: "eyJhbGciOiJSUzI1NiIs..."
+                        expiresIn: 3600
+                        tokenType: "Bearer"
+                      sync_status:
+                        task_id: "celery-task-abc123"
+                existing_user:
+                  summary: Existing user response (no sync_status)
+                  value:
+                    status: "ok"
+                    data:
+                      user:
+                        id: "550e8400-e29b-41d4-a716-446655440000"
+                        email: "user@example.com"
+                        name: "John Doe"
+                        is_new_user: false
+                        onboarding_completed: true
+                        created_at: "2025-06-15T08:00:00Z"
+                      tokens:
+                        accessToken: "eyJhbGciOiJSUzI1NiIs..."
+                        refreshToken: "eyJjdHkiOiJKV1QiLCJl..."
+                        idToken: "eyJhbGciOiJSUzI1NiIs..."
+                        expiresIn: 3600
+                        tokenType: "Bearer"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: Invalid auth code or authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/auth/logout:
+    post:
+      tags:
+        - auth
+      summary: User Logout
+      description: |
+        Log out the user by revoking session(s) and invalidating Cognito tokens.
+        
+        **Single Device Logout (default):**
+        - Revokes the current session in the database
+        - Invalidates the current access token in Cognito
+        
+        **All Devices Logout:**
+        - Revokes all user sessions in the database
+        - Invalidates all user tokens globally in Cognito
+        
+        **After logout:**
+        - Client should delete stored tokens (access, refresh, ID tokens)
+        - All API requests with old tokens will return 401 Unauthorized
+      operationId: logout
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                logout_all_devices:
+                  type: boolean
+                  default: false
+                  description: If true, logs out from all devices. If false or omitted, logs out from current device only.
+            example:
+              logout_all_devices: false
+      responses:
+        "200":
+          description: Successfully logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                status: "ok"
+                data: "success"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - auth
+      summary: Refresh Access Token
+      description: |
+        Refresh an expired access token using a valid refresh token.
+        
+        **Security:**
+        - Requires Authorization header with expired/valid access token (defense-in-depth)
+        - Middleware allows expired tokens specifically for this endpoint
+        
+        **Usage:**
+        - When access token expires (typically after 1 hour)
+        - Returns new access token and ID token
+        - Refresh token remains the same (not rotated)
+        
+        **Token Expiry:**
+        - Access tokens expire after 1 hour
+        - Refresh tokens expire after 30 days (Cognito default)
+        - Client should handle token refresh automatically when receiving 401 errors
+      operationId: refreshToken
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+                  description: The refresh token received during sign-in
+            example:
+              refresh_token: "eyJjdHkiOiJKV1QiLCJl..."
+      responses:
+        "200":
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                status: "ok"
+                data:
+                  tokens:
+                    accessToken: "eyJhbGciOiJSUzI1NiIs..."
+                    refreshToken: "eyJjdHkiOiJKV1QiLCJl..."
+                    idToken: "eyJhbGciOiJSUzI1NiIs..."
+                    expiresIn: 3600
+                    tokenType: "Bearer"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status: "nok"
+                error:
+                  code: "TOKEN_REFRESH_FAILED"
+                  message: "Invalid or expired refresh token"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/sync/status:
+    get:
+      tags:
+        - sync
+      summary: Get Email Sync Status
+      description: |
+        Returns whether an email sync job is currently running for the authenticated user.
+
+        `is_running` and `last_sync_date` are always present at the root.
+        `job` is only present when `is_running=true`.
+
+        **Status values inside `job.status`:**
+        - `queued` → Job created, worker not yet picked it up
+        - `processing` → Email fetch in progress
+        - `emails_fetched` → All emails fetched, AI pipeline running
+      operationId: getSyncStatus
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      responses:
+        "200":
+          description: Successfully retrieved sync status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              examples:
+                not_running_never_synced:
+                  summary: No sync ever run
+                  value:
+                    status: "ok"
+                    data:
+                      is_running: false
+                      last_sync_date: null
+                not_running_previously_synced:
+                  summary: Not running, has prior sync
+                  value:
+                    status: "ok"
+                    data:
+                      is_running: false
+                      last_sync_date: "2026-02-10T07:18:40Z"
+                running:
+                  summary: Sync actively in progress
+                  value:
+                    status: "ok"
+                    data:
+                      is_running: true
+                      last_sync_date: "2026-01-15T10:00:00Z"
+                      job:
+                        task_id: "ee04530d-2ec0-421a-9c3c-4c29d4bf59b9"
+                        status: "processing"
+                        total_emails: 44
+                        processed_emails: 10
+                        pipeline_completed_count: 5
+                        failed_emails: 0
+                        progress_percent: 11.36
+                        started_at: "2026-02-19T08:00:00Z"
+                        error_message: null
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/sync/now:
+    post:
+      tags:
+        - sync
+      summary: Trigger manual email sync
+      description: |
+        Manually start an email sync job for the authenticated user.
+
+        This endpoint:
+        - Creates a new email_sync_jobs row with sync_type = "manual"
+        - Publishes a Celery task to process emails
+
+        Poll GET /api/v1/sync/status to monitor progress.
+      operationId: triggerManualSync
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      responses:
+        "200":
+          description: Manual sync started successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncNowResponse"
+              examples:
+                success:
+                  summary: Manual sync started
+                  value:
+                    status: "ok"
+                    data:
+                      success: true
+                      message: "Sync started"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/users/{id}:
+    get:
+      tags:
+        - profiles
+      summary: Get user details
+      description: |
+        Get user details after successful login or signup.
+
+        **Authentication:**
+        - Requires Bearer token in Authorization header
+        - Format: `Authorization: Bearer &lt;your-jwt-token&gt;`
+
+        **Parameters:**
+        - User ID must be a valid UUID format
+      operationId: getUser
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: id
+          in: path
+          description: Unique identifier for the user
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        "200":
+          description: Successfully retrieved user details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+              examples:
+                user_response:
+                  summary: Successful user response
+                  value:
+                    status: "ok"
+                    data:
+                      id: "550e8400-e29b-41d4-a716-446655440000"
+                      name: "John Doe"
+                      email: "john.doe@example.com"
+                      createdAt: "2025-08-28T10:30:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "429":
+          $ref: "#/components/responses/RateLimitError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/users/preferences/onboarding-consent:
+    post:
+      tags:
+        - profiles
+      summary: Set user onboarding consent preferences
+      description: |
+        Submit user consent preferences during the onboarding process. This endpoint captures
+        various privacy and data processing consent settings that govern how the application
+        can interact with the user's data and accounts.
+
+        **Authentication:**
+        - Requires Bearer token in Authorization header
+        - Format: `Authorization: Bearer &lt;your-jwt-token&gt;`
+
+        **Consent Types:**
+        - **allow_google_auth**: Permission to use Google authentication
+        - **is_business_identity**: Whether this is a business or personal account
+        - **allow_scan_emails**: Permission to scan email messages for privacy insights
+        - **periodic_email_scan**: Allow periodic automatic email scanning
+        - **allow_dsar_request**: Permission to submit DSAR requests on behalf of the user
+        - **allow_send_emails**: Permission to send emails (e.g., DSAR requests)
+        - **track_replies**: Permission to track email replies from companies
+
+        **Important Notes:**
+        - All consent fields are boolean values (true/false)
+        - This endpoint is typically called once during user onboarding
+        - Users can update their preferences later through the settings
+        - Consent status affects available features and functionality
+      operationId: setOnboardingConsent
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      requestBody:
+        required: true
+        description: User consent preferences for onboarding
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnboardingConsentRequest"
+            examples:
+              full_consent:
+                summary: Full consent (all features enabled)
+                value:
+                  allow_google_auth: true
+                  is_business_identity: true
+                  allow_scan_emails: true
+                  periodic_email_scan: true
+                  allow_dsar_request: true
+                  allow_send_emails: true
+                  track_replies: true
+              minimal_consent:
+                summary: Minimal consent (basic features only)
+                value:
+                  allow_google_auth: true
+                  is_business_identity: false
+                  allow_scan_emails: false
+                  periodic_email_scan: false
+                  allow_dsar_request: false
+                  allow_send_emails: false
+                  track_replies: false
+              business_user:
+                summary: Business user with full features
+                value:
+                  allow_google_auth: true
+                  is_business_identity: true
+                  allow_scan_emails: true
+                  periodic_email_scan: true
+                  allow_dsar_request: true
+                  allow_send_emails: true
+                  track_replies: true
+      responses:
+        "200":
+          description: Consent preferences saved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingConsentResponse"
+              examples:
+                consent_saved:
+                  summary: Successful consent save
+                  value:
+                    status: "ok"
+                    data: "success"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "422":
+          description: Invalid consent data format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status: "nok"
+                error:
+                  code: 422001
+                  message:
+                    [
+                      "Invalid consent field values. All fields must be boolean.",
+                    ]
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+      x-codeSamples:
+        - lang: curl
+          label: cURL
+          source: |
+            curl --request POST \
+              --url 'https://privcy-ai-dev-alb-1604351693.eu-north-1.elb.amazonaws.com/gateway/api/v1/users/preferences/onboarding-consent' \
+              --header 'Authorization: Bearer eyJhbGciOiJSUzI1NiIs...' \
+              --header 'Content-Type: application/json' \
+              --data '{
+                "allow_google_auth": true,
+                "is_business_identity": true,
+                "allow_scan_emails": true,
+                "periodic_email_scan": true,
+                "allow_dsar_request": true,
+                "allow_send_emails": true,
+                "track_replies": true
+              }'
+        - lang: javascript
+          label: JavaScript (Fetch)
+          source: |
+            const response = await fetch('https://privcy-ai-dev-alb-1604351693.eu-north-1.elb.amazonaws.com/gateway/api/v1/users/preferences/onboarding-consent', {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Bearer eyJhbGciOiJSUzI1NiIs...',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                allow_google_auth: true,
+                is_business_identity: true,
+                allow_scan_emails: true,
+                periodic_email_scan: true,
+                allow_dsar_request: true,
+                allow_send_emails: true,
+                track_replies: true
+              })
+            });
+            const data = await response.json();
+        - lang: python
+          label: Python (Requests)
+          source: |
+            import requests
+
+            url = "https://privcy-ai-dev-alb-1604351693.eu-north-1.elb.amazonaws.com/gateway/api/v1/users/preferences/onboarding-consent"
+            headers = {
+                "Authorization": "Bearer eyJhbGciOiJSUzI1NiIs...",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "allow_google_auth": True,
+                "is_business_identity": True,
+                "allow_scan_emails": True,
+                "periodic_email_scan": True,
+                "allow_dsar_request": True,
+                "allow_send_emails": True,
+                "track_replies": True
+            }
+
+            response = requests.post(url, json=payload, headers=headers)
+            data = response.json()
+
+  /api/v1/data-maps:
+    get:
+      tags:
+        - data-maps
+      summary: Get data map list
+      description: |
+        Retrieve a list of data companies or entities with risk assessments that have user data or user details stored in their databases.
+        This endpoint provides comprehensive data mapping information including risk scores,
+        categories, and compliance status for data privacy management, showing which companies
+        are processing or storing the user's personal information.
+
+        **Filtering Options:**
+        - All filters are optional. When multiple filters are provided
+        they are combined with AND logic (results must match ALL active filters).
+
+        **Search Capabilities:**
+        - Full-text search across entity names.Applied with AND alongside any active filters.
+
+        **Response Metadata:**
+        - Includes last synchronization timestamp for data freshness tracking
+
+      operationId: getDataMap
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: search
+          in: query
+          description: Search term for full-text search across entity names and descriptions
+          schema:
+            type: string
+            maxLength: 100
+          example: "Gymco"   
+              
+        - name: risk_level
+          in: query
+          description: Filter by risk level (single value only)
+          required: false
+          schema:
+            type: string
+            enum: [high, medium, low]
+            example: high
+
+
+        - name: category
+          in: query
+          description: Filter by industry category (single value only)
+          required: false
+          schema:
+            type: string
+            enum: [travel, retail, fitness, banking, sport, technology, healthcare, education]
+            example: travel
+
+        - name: status
+          in: query
+          description: Filter by action/DSAR status (single value only)
+          required: false
+          schema:
+            type: string
+            enum: [no_action, dsar_pending, completed, escalated]
+            example: no_action
+
+        - name: limit
+          in: query
+          description: Number of items per page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+          example: 10
+        - $ref: "#/components/parameters/PaginationCursor"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Successfully retrieved data map list
+          headers:
+            X-Total-Count:
+              description: Total number of items available
+              schema:
+                type: integer
+              example: 150
+            X-Last-Synced-At:
+              description: Timestamp of last data synchronization
+              schema:
+                type: string
+                format: date-time
+              example: "2026-02-02T18:34:21Z"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedDataMapResponse"
+              examples:
+                success_response:
+                  summary: Successful data map response
+                  value:
+                    status: "ok"
+                    data:
+                      - id: 1666
+                        company_name: "Gymco"
+                        risk_score: "9.5"
+                        company_logo: "img_image_48x48.png"
+                        created_at: "2025-08-25T10:30:00Z"
+                        tags: ["Contact Info", "ID", "financial"]
+                    pagination:
+                      hasMore: true
+                      limit: 20
+                      nextCursor: "eyJpZCI6MTY2NiwidGltZXN0YW1wIjoiMjAyNS0wOC0yNVQxMDozMDowMFoifQ=="
+                      totalItems: 150
+                    meta:
+                      lastSyncedAt: "2026-02-02T18:34:21Z"
+                empty_response:
+                  summary: Empty data map response
+                  value:
+                    status: "ok"
+                    data:
+                      items: []
+                      pagination:
+                        hasMore: false
+                        limit: 20
+                        nextCursor: null
+                        totalItems: 0
+                      meta:
+                        lastSyncedAt: "2026-02-02T18:34:21Z"
+
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "429":
+          $ref: "#/components/responses/RateLimitError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+
+  /api/v1/insights:
+    get:
+      tags:
+        - insights
+      summary: Get privacy insights dashboard
+      description: |
+        Retrieve comprehensive privacy insights and analytics for the dashboard.
+        This endpoint provides key metrics, compliance status, and privacy-related statistics
+        to give users an overview of their privacy posture and compliance activities.
+
+        **Metrics Included:**
+        - Privacy level score (0-100)
+        - Number of companies tracked
+        - Data reclaim statistics
+        - DSAR request counts
+        - Notification status
+        - Status banner images for visual indicators
+      operationId: getInsights
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      responses:
+        "200":
+          description: Successfully retrieved insights data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsightsResponse"
+              examples:
+                dashboard_insights:
+                  summary: Dashboard insights response
+                  value:
+                    status: "ok"
+                    data:
+                      id: "4644i1"
+                      level: "75"
+                      companies: "10"
+                      reclaim: "2"
+                      DSAR: "10"
+                      data_footprint:
+                        - date: "2025-06-02T00:00:00Z"
+                          value: 30
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    patch:
+      tags:
+        - insights
+      summary: Modify configuration
+      description: |
+        Turn on weekly notification and disable API endpoint.
+        This endpoint allows users to configure their notification preferences
+        using query parameters for simple boolean settings.
+      operationId: modifyConfig
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: notification
+          in: query
+          required: true
+          description: Enable or disable weekly notifications
+          schema:
+            type: boolean
+            example: true
+      responses:
+        "200":
+          description: Configuration successfully modified
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigurationResponse"
+              examples:
+                notification_enabled:
+                  summary: Notification turned on
+                  value:
+                    status: "ok"
+                    data:
+                      notification: "enabled"
+                notification_disabled:
+                  summary: Notification turned off
+                  value:
+                    status: "ok"
+                    data:
+                      notification: "disabled"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    put:
+      tags:
+        - insights
+      summary: Reject or Accept Reclaims
+      description: |
+        Reject or Accept the new reclaims data notification
+      operationId: rejectOrAccept
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      requestBody:
+        required: true
+        description: Reclaim decision payload
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reclaim_id
+                - status
+              properties:
+                reclaim_id:
+                  type: string
+                  description: Unique identifier of the reclaim
+                  example: "rec12345"
+                status:
+                  type: string
+                  description: Decision for the reclaim
+                  enum: [accepted, declined]
+                  example: "accepted"
+            examples:
+              accept_reclaim:
+                summary: Accept reclaim request
+                value:
+                  reclaim_id: "rec12345"
+                  status: "accepted"
+              decline_reclaim:
+                summary: Decline reclaim request
+                value:
+                  reclaim_id: "rec67890"
+                  status: "declined"
+      responses:
+        "200":
+          description: Reclaim decision processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              examples:
+                accept_success:
+                  summary: Accept success response
+                  value:
+                    status: "ok"
+                    data:
+                      reclaim_id: "rec12345"
+                      status: "accepted"
+                decline_success:
+                  summary: Decline success response
+                  value:
+                    status: "ok"
+                    data:
+                      reclaim_id: "rec67890"
+                      status: "declined"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "404":
+          description: Reclaim request not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status: "nok"
+                error:
+                  code: 404001
+                  message: ["Reclaim request not found"]
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/companies:
+    get:
+      tags:
+        - companies
+      summary: Get company details with deadline information
+      description: |
+        Retrieve company details and deadline information for Data Subject Access Requests (DSAR) 
+        and other privacy requests. This endpoint provides information about companies that have 
+        received requests along with how many days remain until their response deadline.
+
+        **Information Provided:**
+         - Company name and logo
+         - Request type (Access, Deletion, Rectification, etc.)
+         - Sent date of the request
+         - Days remaining until deadline
+         - Request status and tracking information
+
+        **Request Types:**
+         - Access requests
+         - Deletion requests  
+         - Rectification requests
+         - Portability requests
+         - Objection requests
+
+      operationId: getCompanyDetails
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      responses:
+        "200":
+          description: Successfully retrieved requests list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestListResponse"
+              examples:
+                requests_list:
+                  summary: DSAR requests list
+                  value:
+                    status: "ok"
+                    data:
+                      - id: "4644i1"
+                        name: "Facebook"
+                        DSAR: "Access Request"
+                        logo: "facebook_logo_square.png"
+                        deadline: "5"
+                        sentDate: "2025-08-30T10:00:00Z"
+
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/companies/{id}:
+    get:
+      tags:
+        - companies
+      summary: Get detailed request information
+      description: |
+        Retrieve detailed information about a specific Data Subject Access Request (DSAR) 
+        or privacy request, including complete activity history, company response timeline, 
+        and current status. This endpoint provides comprehensive tracking information 
+        for a single request.
+
+        **Detailed Information Includes:**
+         - Complete request timeline and activity log
+         - Company response history and dates
+         - Request hash for verification
+         - Current status and progress updates
+         - Deadline information and days remaining
+         - All communication records with the company
+
+         **Request Types:**
+         - Access requests
+         - Deletion requests  
+         - Rectification requests
+         - Portability requests
+         - Objection requests
+      operationId: getRequestDetails
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: id
+          in: path
+          description: Unique identifier of the company/request
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-zA-Z0-9]+$"
+          example: "4644i1"
+      responses:
+        "200":
+          description: Successfully retrieved request details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestListResponse"
+              examples:
+                requests_list:
+                  summary: DSAR request details
+                  value:
+                    status: "ok"
+                    data:
+                      - id: "4644i1"
+                        name: "Facebook"
+                        DSAR: "Access Request"
+                        logo: "facebook_logo_square.png"
+                        deadline: "5"
+                        requestId: "4644i1"
+                        sentDate: "2025-08-30T10:00:00Z"
+                        requestHash: "0x8e2c7a1f9d4b6c5e0a3f2b1"
+                        companyResponse:
+                          - date: "2025-09-01T12:00:00Z"
+                          - date: "2025-09-03T15:30:00Z"
+                        activityLog:
+                          - action: "Request Sent"
+                            date: "2025-08-30T10:00:00Z"
+
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/companies/{id}/complete:
+    post:
+      tags:
+        - companies
+      summary: Mark request as completed
+      description: |
+        Mark a specific DSAR or privacy request as completed. This action triggers
+        completion workflows including notification to the requester and archival
+        of related documents.
+
+        **Completion Process:**
+        - Updates request status to 'completed'
+        - Logs completion timestamp and user
+        - Triggers requester notification
+        - Initiates document archival process
+        - Updates compliance metrics
+      operationId: completeRequest
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: id
+          in: path
+          description: Unique identifier of the company/request to complete
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-zA-Z0-9]+$"
+          example: "4644i1"
+      responses:
+        "200":
+          description: Request marked as completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              examples:
+                completion_success:
+                  summary: Successful completion
+                  value:
+                    status: "ok"
+                    data:
+                      requestId: "4644i1"
+                      status: "completed"
+                      completedAt: "2025-08-28T10:30:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/companies/{id}/escalate:
+    post:
+      tags:
+        - companies
+      summary: Escalate request
+      description: |
+        Escalate a privacy request to higher priority or management level.
+        This action increases the request priority and triggers escalation workflows
+        including management notifications and priority handling procedures.
+
+        **Escalation Triggers:**
+        - Increases request priority level
+        - Notifies management team
+        - Updates SLA timelines
+        - Logs escalation reason and timestamp
+        - May trigger automated compliance checks
+      operationId: escalateRequest
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: id
+          in: path
+          description: Unique identifier of the company/request to escalate
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-zA-Z0-9]+$"
+          example: "4644i1"
+      responses:
+        "200":
+          description: Request escalated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              examples:
+                escalation_success:
+                  summary: Successful escalation
+                  value:
+                    status: "ok"
+                    data:
+                      requestId: "4644i1"
+                      newPriority: "urgent"
+                      escalatedAt: "2025-08-28T10:30:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/faqs:
+    get:
+      tags:
+        - faqs
+      summary: Get FAQs
+      description: |
+        Retrieve all frequently asked questions with answers.
+
+        **Response format:** Standard success wrapper with data array
+        **Fields returned:** id, question, answer
+        **Authentication:** Required
+      operationId: getFAQs
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      responses:
+        "200":
+          description: FAQ list retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FAQResponse"
+              examples:
+                faqs:
+                  summary: Complete FAQ list response
+                  value:
+                    status: "ok"
+                    data:
+                      - id: "faq_dsar_001"
+                        question: "What is a DSAR and what can I request?"
+                        answer: "A **DSAR (Data Subject Access Request)** lets you ask an organization what personal data they hold about you, how they use it, who they share it with, and request actions like **access, deletion, correction, portability, or restriction** (depending on applicable law)."
+                      - id: "faq_dsar_002"
+                        question: "What do DSAR statuses mean in PrivcyAI?"
+                        answer: "**Draft** (not submitted), **Submitted** (sent), **Acknowledged** (received), **In Review** (processing), **Need Info** (verification/details required), **Fulfilled** (completed), **Partially Fulfilled** (some items done), **Rejected** (refused), **Expired/No Response** (deadline passed without completion)."
+                      - id: "faq_dsar_003"
+                        question: "Why does a company ask for identity verification for a DSAR?"
+                        answer: "Organizations may require verification to prevent unauthorized access to your personal data. PrivcyAI will show what they requested and helps you respond safely. Share only what's necessary and redact non-required fields when possible."
+                      - id: "faq_dsar_004"
+                        question: "What can I do if a company doesn't respond to my request?"
+                        answer: "Use **Follow-up** to send a reminder. If there's still no response, you can escalate by sending a final notice and, where applicable, filing a complaint with the relevant privacy authority. PrivcyAI keeps the full timeline and evidence in one place."
+                      - id: "faq_risk_001"
+                        question: "What is the Privacy Risk Score in PrivcyAI?"
+                        answer: "Your **Privacy Risk Score** is an estimate of privacy exposure based on signals like the types of data involved (e.g., financial/location), account footprint across services, request outcomes, and security posture indicators. It's meant to guide actions to reduce exposure."
+                      - id: "faq_risk_002"
+                        question: "How can I reduce my Privacy Risk Score?"
+                        answer: "Start with high-impact steps: enable **MFA**, remove unused accounts, submit **deletion/opt-out** requests, limit app permissions, rotate passwords, and reduce data sharing/ads settings. PrivcyAI highlights actions with the biggest expected risk reduction."
+                      - id: "faq_vault_001"
+                        question: "What is the Privacy Vault and what does it store?"
+                        answer: "The **Privacy Vault** helps you track accounts, linked identifiers (email/phone), consents, data categories, and DSAR timelines. You control what you add. You can update or remove items anytime."
+                      - id: "faq_security_001"
+                        question: "Is my data encrypted and who can access it?"
+                        answer: "PrivcyAI uses encryption in transit (TLS) and encryption at rest for stored data. Access is limited to authorized systems and only when needed to deliver features (like sending a verification file to an organization). You can remove uploaded files after use."
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/legal:
+    get:
+      tags:
+        - profiles
+      summary: Get Legal Content
+      description: |
+        Retrieve Terms & Conditions or Privacy Policy based on the `type` query parameter.
+      operationId: getLegalContent
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: type
+          in: query
+          required: true
+          description: Type of legal document to retrieve
+          schema:
+            type: string
+            enum: [terms, privacy]
+          example: terms
+      responses:
+        "200":
+          description: Legal content retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegalResponse"
+              examples:
+                terms:
+                  summary: Terms & Conditions
+                  value:
+                    status: "ok"
+                    data:
+                      id: "550e8400-e29b-41d4-a716-446655440001"
+                      type: "terms"
+                      title: "Terms & Conditions"
+                      content: "By using PrivcyAI, you agree to our terms of service. We collect and process your email data to provide privacy insights, DSAR management, and risk assessment services. You retain full control over your data and can revoke access at any time. We use industry-standard encryption to protect your information."
+                privacy:
+                  summary: Privacy Policy
+                  value:
+                    status: "ok"
+                    data:
+                      id: "550e8400-e29b-41d4-a716-446655440001"
+                      type: "privacy"
+                      title: "Privacy Policy"
+                      content: "This Privacy Policy explains how we collect..."
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/business-directory:
+    get:
+      tags:
+        - business-directory
+      summary: Get business directory list
+      description: |
+        Retrieve a list of businesses/entities with the same listing, search, filtering,
+        and cursor pagination features as `/api/v1/data-maps`.
+
+        **Filtering Options:**
+        - All filters are optional. When multiple filters are provided
+          they are combined with AND logic (results must match ALL active filters).
+
+        **Search Capabilities:**
+        - Full-text search across entity names. Applied with AND alongside any active filters.
+
+        **Response Metadata:**
+        - Includes last synchronization timestamp for data freshness tracking
+      operationId: getBusinessDirectory
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: search
+          in: query
+          description: Search term for full-text search across entity names and descriptions
+          schema:
+            type: string
+            maxLength: 100
+          example: "Gymco"   
+              
+        - name: risk_level
+          in: query
+          description: Filter by risk level (single value only)
+          required: false
+          schema:
+            type: string
+            enum: [high, medium, low]
+            example: high
+
+
+        - name: category
+          in: query
+          description: Filter by industry category (single value only)
+          required: false
+          schema:
+            type: string
+            enum: [travel, retail, fitness, banking, sport, technology, healthcare, education]
+            example: travel
+
+        - name: status
+          in: query
+          description: Filter by action/DSAR status (single value only)
+          required: false
+          schema:
+            type: string
+            enum: [no_action, dsar_pending, completed, escalated]
+            example: no_action
+
+        - name: limit
+          in: query
+          description: Number of items per page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+          example: 10
+        - $ref: "#/components/parameters/PaginationCursor"
+        - $ref: "#/components/parameters/PaginationLimit"
+      responses:
+        "200":
+          description: Successfully retrieved data map list
+          headers:
+            X-Total-Count:
+              description: Total number of items available
+              schema:
+                type: integer
+              example: 150
+            X-Last-Synced-At:
+              description: Timestamp of last data synchronization
+              schema:
+                type: string
+                format: date-time
+              example: "2026-02-02T18:34:21Z"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedDataMapResponse"
+              examples:
+                success_response:
+                  summary: Successful data map response
+                  value:
+                    status: "ok"
+                    data:
+                      - id: 1666
+                        company_name: "Gymco"
+                        risk_score: "9.5"
+                        company_logo: "img_image_48x48.png"
+                        created_at: "2025-08-25T10:30:00Z"
+                        tags: ["Contact Info", "ID", "financial"]
+                    pagination:
+                      hasMore: true
+                      limit: 20
+                      nextCursor: "eyJpZCI6MTY2NiwidGltZXN0YW1wIjoiMjAyNS0wOC0yNVQxMDozMDowMFoifQ=="
+                      totalItems: 150
+                    meta:
+                      lastSyncedAt: "2026-02-02T18:34:21Z"
+                empty_response:
+                  summary: Empty data map response
+                  value:
+                    status: "ok"
+                    data:
+                      items: []
+                      pagination:
+                        hasMore: false
+                        limit: 20
+                        nextCursor: null
+                        totalItems: 0
+                      meta:
+                        lastSyncedAt: "2026-02-02T18:34:21Z"
+
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "403":
+          $ref: "#/components/responses/ForbiddenError"
+        "429":
+          $ref: "#/components/responses/RateLimitError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+
+
+  /api/v1/privacy-requests:
+    post:
+      tags:
+        - privacy-requests
+      summary: Create a privacy request
+      description: |
+        Create a new DSAR or privacy request to a company.
+
+        **request_type values:**
+        - `access` — Subject Access Request (SAR)
+        - `delete_full` — Full erasure of all personal data
+        - `delete_partial_mandatory` — Mandatory partial deletion
+        - `delete_partial_select` — User-selected partial deletion
+
+        **regulation_type:** `gdpr` | `dpdp`
+
+        On success the request is queued for email delivery and the record
+        is returned with status `pending`.
+      operationId: createPrivacyRequest
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePrivacyRequestBody"
+            examples:
+              access_request:
+                summary: Subject Access Request (GDPR)
+                value:
+                  company_id: "550e8400-e29b-41d4-a716-446655440001"
+                  request_type: "access"
+                  regulation_type: "gdpr"
+                  description: "Please provide all personal data you hold about me."
+                  request_reference: "REF-001"
+              delete_full:
+                summary: Full deletion request
+                value:
+                  company_id: "550e8400-e29b-41d4-a716-446655440001"
+                  request_type: "delete_full"
+                  regulation_type: "gdpr"
+                  description: "Please delete all personal data you hold about me."
+      responses:
+        "201":
+          description: Privacy request created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                status: "ok"
+                data:
+                  id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  user_id: "550e8400-e29b-41d4-a716-446655440000"
+                  company_id: "550e8400-e29b-41d4-a716-446655440001"
+                  request_type: "access"
+                  status: "pending"
+                  regulation_type: "gdpr"
+                  request_reference: "REF-001"
+                  requires_user_action: false
+                  created_at: "2026-06-08T10:00:00Z"
+                  updated_at: "2026-06-08T10:00:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+    get:
+      tags:
+        - privacy-requests
+      summary: List user's privacy requests
+      description: |
+        Returns all privacy requests belonging to the authenticated user.
+
+        **Filtering:**
+        - `status` — narrow to one status value
+        - `requires_action=true` — only requests where the company has replied
+          and the user needs to take action (review, respond, escalate)
+
+        **Pagination:** offset-based via `limit` + `offset`.
+      operationId: listPrivacyRequests
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: status
+          in: query
+          required: false
+          description: Filter by request status
+          schema:
+            type: string
+            enum: [pending, in_progress, completed, rejected, cancelled, escalated]
+          example: pending
+        - name: requires_action
+          in: query
+          required: false
+          description: If true, return only requests that need the user's review
+          schema:
+            type: boolean
+          example: true
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
+      responses:
+        "200":
+          description: List of privacy requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              examples:
+                list:
+                  summary: Requests list
+                  value:
+                    status: "ok"
+                    data:
+                      - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                        user_id: "550e8400-e29b-41d4-a716-446655440000"
+                        company_id: "550e8400-e29b-41d4-a716-446655440001"
+                        request_type: "access"
+                        status: "in_progress"
+                        regulation_type: "gdpr"
+                        requires_user_action: false
+                        deadline_date: "2026-07-08T10:00:00Z"
+                        sent_at: "2026-06-08T10:00:00Z"
+                        created_at: "2026-06-08T10:00:00Z"
+                        updated_at: "2026-06-08T10:30:00Z"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/privacy-requests/stats:
+    get:
+      tags:
+        - privacy-requests
+      summary: Get user request stats
+      description: Returns aggregate counts of the user's privacy requests.
+      operationId: getPrivacyRequestStats
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      responses:
+        "200":
+          description: Stats retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                status: "ok"
+                data:
+                  total_requests: 12
+                  pending_requests: 4
+                  completed_requests: 7
+                  rejected_requests: 1
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/privacy-requests/sync-replies:
+    post:
+      tags:
+        - privacy-requests
+      summary: Sync inbox for company replies
+      description: |
+        Triggers a check of the user's inbox for company replies to open
+        requests. Returns 202 Accepted immediately; the sync runs in the
+        background.
+
+        Poll `GET /privacy-requests?requires_action=true` afterwards to see
+        any newly classified replies.
+      operationId: syncPrivacyReplies
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      responses:
+        "202":
+          description: Sync accepted and running in the background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              examples:
+                synced:
+                  summary: New replies found
+                  value:
+                    status: "ok"
+                    data:
+                      task_id: "d99d98d2-54b3-4cd7-a165-f764578c39c4"
+                      item_count: 3
+                      skipped: false
+                skipped:
+                  summary: Sync skipped (already running)
+                  value:
+                    status: "ok"
+                    data:
+                      task_id: ""
+                      item_count: 0
+                      skipped: true
+                      skip_reason: "sync already in progress"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/privacy-requests/{id}:
+    get:
+      tags:
+        - privacy-requests
+      summary: Get single privacy request
+      description: Returns full detail of one privacy request including reply tracking fields.
+      operationId: getPrivacyRequest
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: id
+          in: path
+          required: true
+          description: Privacy request UUID
+          schema:
+            type: string
+            format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      responses:
+        "200":
+          description: Privacy request detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                status: "ok"
+                data:
+                  id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  user_id: "550e8400-e29b-41d4-a716-446655440000"
+                  company_id: "550e8400-e29b-41d4-a716-446655440001"
+                  request_type: "access"
+                  status: "in_progress"
+                  regulation_type: "gdpr"
+                  request_reference: "REF-001"
+                  rendered_subject: "Data Subject Access Request"
+                  rendered_body: "Dear Data Controller, ..."
+                  deadline_date: "2026-07-08T10:00:00Z"
+                  sent_to_email: "privacy@company.com"
+                  sent_at: "2026-06-08T10:00:00Z"
+                  requires_user_action: false
+                  request_hash: "0x8e2c7a1f9d4b6c5e0a3f2b1"
+                  created_at: "2026-06-08T10:00:00Z"
+                  updated_at: "2026-06-08T10:30:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/privacy-requests/{id}/activities:
+    get:
+      tags:
+        - privacy-requests
+      summary: Get request activity log
+      description: Returns the chronological activity log for a single privacy request.
+      operationId: getPrivacyRequestActivities
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: id
+          in: path
+          required: true
+          description: Privacy request UUID
+          schema:
+            type: string
+            format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      responses:
+        "200":
+          description: Activity log retrieved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                status: "ok"
+                data:
+                  - id: "act-001"
+                    privacy_request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    activity_type: "request_sent"
+                    description: "DSAR email sent to privacy@company.com"
+                    performed_by: "system"
+                    created_at: "2026-06-08T10:00:00Z"
+                  - id: "act-002"
+                    privacy_request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    activity_type: "reply_received"
+                    description: "Company acknowledged receipt of request"
+                    performed_by: "system"
+                    created_at: "2026-06-10T14:22:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/privacy-requests/{id}/status:
+    patch:
+      tags:
+        - privacy-requests
+      summary: Update request status
+      description: |
+        Update the status of a privacy request.
+
+        **Valid transitions:**
+        - `pending` → `in_progress`, `cancelled`
+        - `in_progress` → `completed`, `rejected`, `escalated`, `cancelled`
+        - `escalated` → `completed`, `rejected`
+      operationId: updatePrivacyRequestStatus
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePrivacyRequestStatusBody"
+            examples:
+              complete:
+                summary: Mark as completed
+                value:
+                  status: "completed"
+              escalate:
+                summary: Escalate
+                value:
+                  status: "escalated"
+              cancel:
+                summary: Cancel
+                value:
+                  status: "cancelled"
+      responses:
+        "200":
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                status: "ok"
+                data:
+                  id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  status: "completed"
+                  updated_at: "2026-06-08T11:00:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/privacy-requests/{id}/response:
+    patch:
+      tags:
+        - privacy-requests
+      summary: Record company response text
+      description: |
+        Store the text of a company's reply against the request record.
+        Typically called after the user reads an incoming email reply and
+        wants to log what the company said.
+      operationId: updatePrivacyRequestResponse
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePrivacyRequestResponseBody"
+            example:
+              response_text: "We have received your request and will respond within 30 days as required by GDPR Article 12."
+      responses:
+        "200":
+          description: Response recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                status: "ok"
+                data:
+                  id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  response_summary: "We have received your request and will respond within 30 days..."
+                  updated_at: "2026-06-08T11:00:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/companies/{companyId}/privacy-requests:
+    get:
+      tags:
+        - privacy-requests
+      summary: List requests for a specific company
+      description: Returns all privacy requests the authenticated user has sent to a given company.
+      operationId: listCompanyPrivacyRequests
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: companyId
+          in: path
+          required: true
+          description: Company UUID
+          schema:
+            type: string
+            format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440001"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, in_progress, completed, rejected, cancelled, escalated]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        "200":
+          description: List of requests for the company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                status: "ok"
+                data:
+                  - id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    company_id: "550e8400-e29b-41d4-a716-446655440001"
+                    request_type: "access"
+                    status: "completed"
+                    created_at: "2026-06-08T10:00:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/assistant/feed:
+    get:
+      tags:
+        - assistant
+      summary: Get Nova assistant feed
+      description: |
+        Returns the Nova-style proactive assistant feed. Built by a scripted
+        rule engine over the user's real DSAR state — deterministic, no LLM.
+
+        **Message kinds:**
+        - `overdue` — Company hasn't responded by the deadline (up to 3 shown)
+        - `requires_action` — One or more requests need the user's review
+        - `reply` — A company recently completed a request (positive confirmation)
+        - `no_dsar` — User has never sent any requests (nudge to scan)
+        - `ok` — All requests on track, nothing needs attention
+
+        **Action verbs the client maps to API calls:**
+        - `escalate` → `PATCH /privacy-requests/{id}/status` `{status:"escalated"}`
+        - `view_request` → navigate to request detail screen
+        - `review_requests` → navigate to `GET /privacy-requests?requires_action=true`
+        - `scan` → `POST /sync/now`
+
+        Messages are sorted by `priority` descending (overdue first).
+      operationId: getAssistantFeed
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      responses:
+        "200":
+          description: Assistant feed retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              examples:
+                overdue:
+                  summary: Feed with an overdue request
+                  value:
+                    status: "ok"
+                    data:
+                      messages:
+                        - id: "overdue-a1b2c3d4"
+                          kind: "overdue"
+                          priority: 100
+                          text: "A company hasn't responded by the deadline. Want me to escalate?"
+                          actions:
+                            - label: "Escalate"
+                              action: "escalate"
+                              payload:
+                                request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                            - label: "View"
+                              action: "view_request"
+                              payload:
+                                request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                requires_action:
+                  summary: Feed with replies needing review
+                  value:
+                    status: "ok"
+                    data:
+                      messages:
+                        - id: "requires-action"
+                          kind: "requires_action"
+                          priority: 80
+                          text: "3 of your requests need your review."
+                          actions:
+                            - label: "Review now"
+                              action: "review_requests"
+                all_good:
+                  summary: Nothing needs attention
+                  value:
+                    status: "ok"
+                    data:
+                      messages:
+                        - id: "all-good"
+                          kind: "ok"
+                          priority: 20
+                          text: "All 5 of your requests are on track. Nothing needs you right now."
+                          actions: []
+                no_dsar:
+                  summary: User has never sent a request
+                  value:
+                    status: "ok"
+                    data:
+                      messages:
+                        - id: "no-dsar"
+                          kind: "no_dsar"
+                          priority: 40
+                          text: "You haven't sent any data requests yet. Want me to find the companies holding your data?"
+                          actions:
+                            - label: "Scan now"
+                              action: "scan"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/privacy/purge-my-data:
+    post:
+      tags:
+        - data-purge
+      summary: Request derived-data purge
+      description: |
+        Erases all AI-derived data Privcy holds about the authenticated user
+        across every store (PostgreSQL, S3, DynamoDB, Qdrant vectors).
+
+        Returns **202 Accepted** immediately with a purge tracking record.
+        Poll `GET /privacy/purge-my-data/{id}` to check completion.
+
+        **This action is irreversible.** All email-derived privacy data,
+        risk scores, and vector embeddings will be permanently deleted.
+      operationId: requestDataPurge
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+      responses:
+        "202":
+          description: Purge request accepted and running in background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              example:
+                status: "ok"
+                data:
+                  id: "purge-uuid-here"
+                  status: "pending"
+                  store_postgres: "pending"
+                  store_s3: "pending"
+                  store_dynamo: "pending"
+                  store_qdrant: "pending"
+                  postgres_count: 0
+                  s3_count: 0
+                  dynamo_count: 0
+                  qdrant_count: 0
+                  created_at: "2026-06-08T10:00:00Z"
+                  updated_at: "2026-06-08T10:00:00Z"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/privacy/purge-my-data/{id}:
+    get:
+      tags:
+        - data-purge
+      summary: Get purge status
+      description: |
+        Poll the status of a previously requested data purge.
+
+        **Per-store status values:** `pending` | `in_progress` | `completed` | `failed`
+
+        The `*_count` fields indicate how many records were deleted from each store.
+      operationId: getDataPurge
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AuthorizationHeader"
+        - name: id
+          in: path
+          required: true
+          description: Purge tracking UUID returned from POST /privacy/purge-my-data
+          schema:
+            type: string
+            format: uuid
+          example: "purge-uuid-here"
+      responses:
+        "200":
+          description: Purge status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+              examples:
+                in_progress:
+                  summary: Still running
+                  value:
+                    status: "ok"
+                    data:
+                      id: "purge-uuid-here"
+                      status: "in_progress"
+                      store_postgres: "completed"
+                      store_s3: "in_progress"
+                      store_dynamo: "pending"
+                      store_qdrant: "pending"
+                      postgres_count: 142
+                      s3_count: 0
+                      dynamo_count: 0
+                      qdrant_count: 0
+                      created_at: "2026-06-08T10:00:00Z"
+                      updated_at: "2026-06-08T10:01:30Z"
+                completed:
+                  summary: All stores purged
+                  value:
+                    status: "ok"
+                    data:
+                      id: "purge-uuid-here"
+                      status: "completed"
+                      store_postgres: "completed"
+                      store_s3: "completed"
+                      store_dynamo: "completed"
+                      store_qdrant: "completed"
+                      postgres_count: 142
+                      s3_count: 18
+                      dynamo_count: 5
+                      qdrant_count: 142
+                      created_at: "2026-06-08T10:00:00Z"
+                      updated_at: "2026-06-08T10:03:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+components:
+  parameters:
+    AuthorizationHeader:
+      name: Authorization
+      in: header
+      description: Bearer token for authentication
+      required: true
+      schema:
+        type: string
+        pattern: '^Bearer [A-Za-z0-9\-\._~\+\/]+=*$'
+      example: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+    PaginationCursor:
+      name: cursor
+      in: query
+      description: Cursor for pagination (omit for first request)
+      schema:
+        type: string
+      example: "eyJpZCI6MTIzNDUsInRpbWVzdGFtcCI6IjIwMjUtMDktMDJUMTA6MzA6MDBaIn0="
+
+    PaginationLimit:
+      name: limit
+      in: query
+      description: Maximum number of items to return
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      example: 20
+
+  schemas:
+    # Auth Schemas
+    GoogleSignInRequest:
+      type: object
+      required:
+        - serverAuthCode
+      properties:
+        serverAuthCode:
+          type: string
+          description: Google OAuth server auth code from client
+          example: "4/0AX4XfWh..."
+        metadata:
+          type: object
+          properties:
+            ip_address:
+              type: string
+            user_agent:
+              type: string
+            device_type:
+              type: string
+              example: "mobile"
+            device_name:
+              type: string
+              example: "iPhone 14"
+            device_id:
+              type: string
+
+    GoogleSignInResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - user
+            - tokens
+          properties:
+            user:
+              $ref: "#/components/schemas/AuthUser"
+            tokens:
+              $ref: "#/components/schemas/AuthTokens"
+            sync_status:
+              $ref: "#/components/schemas/SyncStatusInfo"
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+
+    AuthUser:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        name:
+          type: string
+          example: "John Doe"
+        first_name:
+          type: string
+          example: "John"
+        last_name:
+          type: string
+          example: "Doe"
+        picture:
+          type: string
+          format: uri
+          example: "https://lh3.googleusercontent.com/..."
+        is_new_user:
+          type: boolean
+          example: true
+        onboarding_completed:
+          type: boolean
+          example: false
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-01-25T10:30:00Z"
+
+    AuthTokens:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          description: JWT access token
+        refreshToken:
+          type: string
+          description: Refresh token for getting new access tokens
+        idToken:
+          type: string
+          description: ID token with user claims
+        expiresIn:
+          type: integer
+          description: Token expiration in seconds
+          example: 3600
+        tokenType:
+          type: string
+          example: "Bearer"
+
+    LogoutRequest:
+      type: object
+      properties:
+        logout_all_devices:
+          type: boolean
+          default: false
+          description: If true, logs out from all devices. If false or omitted, logs out from current device only.
+      example:
+        logout_all_devices: false
+
+    LogoutResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Logged out successfully"
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: The refresh token received during sign-in
+          example: "eyJjdHkiOiJKV1QiLCJl..."
+
+    RefreshTokenResponse:
+      type: object
+      properties:
+        tokens:
+          $ref: "#/components/schemas/AuthTokens"
+
+    SyncStatusInfo:
+      type: object
+      description: Only present for new users when email processing is initiated
+      properties:
+        task_id:
+          type: string
+          description: Use this to poll GET /api/v1/sync/status?taskId=xxx
+          example: "celery-task-abc123"
+
+    SyncStatusResponse:
+      type: object
+      required:
+        - is_running
+        - last_sync_date
+      properties:
+        is_running:
+          type: boolean
+          description: True when a sync job is actively queued or processing.
+          example: true
+        last_sync_date:
+          type: string
+          format: date-time
+          nullable: true
+          description: completed_at of the most recent finished sync. Null if never synced.
+          example: "2026-02-10T07:18:40Z"
+        job:
+          description: Only present when is_running=true.
+          nullable: true
+          $ref: "#/components/schemas/SyncJobDetails"
+
+    SyncJobDetails:
+      type: object
+      properties:
+        task_id:
+          type: string
+          nullable: true
+          example: "ee04530d-2ec0-421a-9c3c-4c29d4bf59b9"
+        status:
+          type: string
+          enum:
+            - queued
+            - processing
+            - emails_fetched
+          example: "processing"
+        total_emails:
+          type: integer
+          example: 44
+        processed_emails:
+          type: integer
+          example: 10
+        pipeline_completed_count:
+          type: integer
+          example: 5
+        failed_emails:
+          type: integer
+          example: 0
+        progress_percent:
+          type: number
+          format: float
+          example: 11.36
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-02-19T08:00:00Z"
+        error_message:
+          type: string
+          nullable: true
+          example: null
+
+    DataReadinessResponse:
+      type: object
+      properties:
+        is_ready:
+          type: boolean
+          description: Whether user data is ready for display
+          example: true
+        processed_count:
+          type: integer
+          description: Number of emails processed
+          example: 150
+        failed_count:
+          type: integer
+          description: Number of emails that failed
+          example: 2
+        processing_started_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-01-25T10:30:00Z"
+        processing_completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-01-25T10:45:00Z"
+        data_available_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-01-25T10:46:00Z"
+
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "INVALID_AUTH_CODE"
+        message:
+          type: string
+          example: "The provided auth code is invalid or expired"
+        details:
+          type: string
+
+    HeartBeatResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "ok"
+        commit_id:
+          type: string
+          example: "development"
+
+    # Onboarding Consent Schemas
+    OnboardingConsentRequest:
+      type: object
+      required:
+        - allow_google_auth
+        - is_business_identity
+        - allow_scan_emails
+        - periodic_email_scan
+        - allow_dsar_request
+        - allow_send_emails
+        - track_replies
+      properties:
+        allow_google_auth:
+          type: boolean
+          description: Permission to use Google authentication
+          example: true
+        is_business_identity:
+          type: boolean
+          description: Whether this is a business or personal account
+          example: true
+        allow_scan_emails:
+          type: boolean
+          description: Permission to scan email messages for privacy insights
+          example: true
+        periodic_email_scan:
+          type: boolean
+          description: Allow periodic automatic email scanning
+          example: true
+        allow_dsar_request:
+          type: boolean
+          description: Permission to submit DSAR requests on behalf of the user
+          example: true
+        allow_send_emails:
+          type: boolean
+          description: Permission to send emails (e.g., DSAR requests)
+          example: true
+        track_replies:
+          type: boolean
+          description: Permission to track email replies from companies
+          example: true
+
+    OnboardingConsentResponse:
+      allOf:
+        - $ref: "#/components/schemas/BaseResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: string
+              description: Simple success acknowledgment
+              example: "success"
+
+    # Base Response Schemas
+    BaseResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: ["ok"]
+          example: "ok"
+
+    UserResponse:
+      allOf:
+        - $ref: "#/components/schemas/BaseResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  example: "550e8400-e29b-41d4-a716-446655440000"
+                name:
+                  type: string
+                  example: "John Doe"
+                email:
+                  type: string
+                  format: email
+                  example: "john.doe@example.com"
+                createdAt:
+                  type: string
+                  format: date-time
+                  example: "2025-08-28T10:30:00Z"
+
+    InsightsResponse:
+      allOf:
+        - $ref: "#/components/schemas/BaseResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              $ref: "#/components/schemas/InsightsData"
+
+    ConfigurationResponse:
+      allOf:
+        - $ref: "#/components/schemas/BaseResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              required:
+                - notification
+              properties:
+                notification:
+                  type: string
+                  enum: [enabled, disabled]
+                  description: Updated notification preference
+                  example: "enabled"
+
+    RequestListResponse:
+      allOf:
+        - $ref: "#/components/schemas/BaseResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/RequestListItem"
+
+    RequestDetailsResponse:
+      allOf:
+        - $ref: "#/components/schemas/BaseResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              $ref: "#/components/schemas/RequestDetails"
+
+    # Infinite Scroll Pagination Schemas
+    PaginationMeta:
+      type: object
+      required:
+        - hasMore
+        - limit
+      properties:
+        hasMore:
+          type: boolean
+          description: Whether more items are available to load
+          example: true
+        limit:
+          type: integer
+          description: Number of items in current batch
+          minimum: 1
+          maximum: 100
+          example: 20
+        nextCursor:
+          type: string
+          description: Cursor for next batch (omitted if hasMore is false)
+          example: "eyJpZCI6MTIzNDUsInRpbWVzdGFtcCI6IjIwMjUtMDktMDJUMTA6MzA6MDBaIn0="
+        totalItems:
+          type: integer
+          description: Total number of items (optional, can be expensive to calculate)
+          minimum: 0
+          example: 150
+
+    PaginatedDataMapResponse:
+      type: object
+      required:
+        - items
+        - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataMapEntity"
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # Data Schemas
+    DataMapEntity:
+      type: object
+      required:
+        - id
+        - name
+        - tags
+        - riskScore
+        - riskLevel
+      properties:
+        id:
+          type: integer
+          description: Unique identifier for the data entity
+          example: 1666
+        name:
+          type: string
+          description: Name of the data entity or company
+          maxLength: 200
+          example: "Gymco"
+        tags:
+          type: array
+          description: Data categories associated with the entity
+          items:
+            type: string
+            enum: [ID, Contact Info]
+          example: ["ID", "Contact info"]
+        riskScore:
+          type: string
+          description: Risk assessment score (0.0-10.0)
+          pattern: '^([0-9](\.\d+)?|10(\.0+)?)$'
+          example: "9.5"
+        riskLevel:
+          type: string
+          description: Risk level assessment
+          enum: [low, medium, high, critical]
+          example: "high"
+        logo:
+          type: string
+          description: Logo image filename or URL
+          maxLength: 255
+          example: "img_image_48x48.png"
+        time:
+          type: string
+          description: Time period or duration
+          maxLength: 50
+          example: "3 month"
+        complianceStatus:
+          type: string
+          enum: [compliant, non-compliant, under-review, unknown]
+          description: Current compliance status
+
+    InsightsData:
+      type: object
+      required:
+        - id
+        - level
+        - companies
+        - reclaim
+        - dsar
+        - data_footprint
+      properties:
+        id:
+          type: string
+          description: Unique insights identifier
+          example: "4644i1"
+        level:
+          type: string
+          description: Privacy level score (0-100)
+          pattern: '^(\d{1,2}|100)$'
+          example: "75"
+        companies:
+          type: string
+          description: Number of companies being tracked
+          pattern: '^\d+$'
+          example: "10"
+        reclaim:
+          type: string
+          description: Number of data reclaim requests
+          pattern: '^\d+$'
+          example: "2"
+        dsar:
+          type: string
+          description: Number of DSAR requests
+          pattern: '^\d+$'
+          example: "10"
+        data_footprint:
+          type: array
+
+    RequestListItem:
+      type: object
+      required:
+        - id
+        - name
+        - DSAR
+        - time
+      properties:
+        id:
+          type: string
+          description: Unique request identifier
+          example: "4644i1"
+        name:
+          type: string
+          description: Company or entity name
+          maxLength: 200
+          example: "Facebook"
+        DSAR:
+          type: string
+          description: Type of DSAR request
+          enum:
+            [
+              Access Request,
+              Deletion Request,
+              Rectification Request,
+              Portability Request,
+              Objection Request,
+            ]
+          example: "Access Request"
+        logo:
+          type: string
+          description: Company logo filename or URL
+          maxLength: 255
+          example: "facebook_logo_square.png"
+        time:
+          type: string
+          description: Time elapsed since request
+          maxLength: 50
+          example: "2 days"
+        status:
+          type: string
+          description: Current request status
+          enum: [pending, in_progress, completed, cancelled]
+        priority:
+          type: string
+          description: Request priority level
+          enum: [low, medium, high, urgent]
+        requestType:
+          type: string
+          description: Type of privacy request
+          enum: [access, deletion, rectification, portability, objection]
+        submittedDate:
+          type: string
+          format: date-time
+          description: Request submission timestamp
+
+    RequestDetails:
+      type: object
+      required:
+        - request_id
+        - request_date
+        - subtitle
+        - request_hash
+        - Activity_log
+      properties:
+        request_id:
+          type: string
+          description: Unique request identifier
+          example: "4644i1"
+        request_date:
+          type: string
+          description: Request submission timestamp (Unix timestamp)
+          example: "1471300214792"
+        subtitle:
+          type: string
+          description: Request type and description
+          maxLength: 200
+          example: "DSAR • Access Request"
+        request_hash:
+          type: string
+          description: Cryptographic hash for request verification
+          pattern: "^0x[a-fA-F0-9]{20,40}$"
+          example: "0x8e2c7a1f9d4b6c5e0a3f2b1"
+        status:
+          type: string
+          enum: [pending, in_progress, completed, cancelled]
+          description: Current request status
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+          description: Request priority level
+        requesterInfo:
+          type: object
+          description: Information about the person making the request
+          properties:
+            name:
+              type: string
+            email:
+              type: string
+              format: email
+            verificationStatus:
+              type: string
+              enum: [pending, verified, rejected]
+        companyInfo:
+          type: object
+          description: Information about the target company
+          properties:
+            name:
+              type: string
+            logo:
+              type: string
+            contactEmail:
+              type: string
+              format: email
+        Activity_log:
+          type: array
+          description: Chronological log of request activities
+          items:
+            type: object
+            required:
+              - action
+              - date
+            properties:
+              action:
+                type: string
+                description: Description of the action taken
+                maxLength: 200
+                example: "Request Sent"
+              date:
+                type: string
+                description: Human-readable date
+                maxLength: 50
+                example: "January 1, 2025"
+              timestamp:
+                type: string
+                format: date-time
+                description: ISO timestamp of the action
+              performedBy:
+                type: string
+                description: User or system that performed the action
+              details:
+                type: string
+                description: Additional details about the action
+                maxLength: 500
+        estimatedCompletion:
+          type: string
+          format: date-time
+          description: Estimated completion date
+        attachments:
+          type: array
+          description: Associated attachments and documents
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              type:
+                type: string
+              size:
+                type: integer
+
+    SuccessResponse:
+      type: object
+      required:
+        - status
+        - data
+      properties:
+        status:
+          type: string
+          enum: ["ok"]
+          description: Success status
+          example: "ok"
+        data:
+          $ref: "#/components/schemas/AuthResponseData"
+
+    AuthResponseData:
+      type: object
+      required:
+        - user
+        - tokens
+      properties:
+        user:
+          $ref: "#/components/schemas/AuthUser"
+        tokens:
+          $ref: "#/components/schemas/AuthTokens"
+        sync_status:
+          $ref: "#/components/schemas/SyncStatusInfo"
+
+    ErrorResponse:
+      type: object
+      required:
+        - status
+        - error
+      properties:
+        status:
+          type: string
+          enum: ["nok"]
+          description: Error status
+          example: "nok"
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: integer
+              description: Error code identifier
+              example: 400001
+            message:
+              type: array
+              items:
+                type: string
+              description: Additional error details as array of strings
+              example: ["Invalid parameter format", "Missing required field"]
+
+    FAQResponse:
+      allOf:
+        - $ref: "#/components/schemas/BaseResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/FAQPublic"
+
+    FAQPublic:
+      type: object
+      required:
+        - id
+        - question
+        - answer
+      properties:
+        id:
+          type: string
+          description: Unique FAQ identifier
+          example: "faq_dsar_001"
+        question:
+          type: string
+          description: FAQ question text
+          maxLength: 500
+          example: "What is a DSAR and what can I request?"
+        answer:
+          type: string
+          description: FAQ answer text
+          example: "A **DSAR (Data Subject Access Request)** lets you ask an organization what personal data they hold about you..."
+
+    SyncNowResponse:
+      allOf:
+        - $ref: "#/components/schemas/BaseResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              required:
+                - success
+              properties:
+                success:
+                  type: boolean
+                  description: Whether the sync job was started successfully
+                  example: true
+                message:
+                  type: string
+                  description: Human-readable status message
+                  example: "Sync started"
+
+    LegalResponse:
+      allOf:
+        - $ref: "#/components/schemas/BaseResponse"
+        - type: object
+          required:
+            - data
+          properties:
+            data:
+              type: object
+              required:
+                - id
+                - type
+                - title
+                - content
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                  example: "550e8400-e29b-41d4-a716-446655440001"
+                type:
+                  type: string
+                  enum: [terms, privacy]
+                  example: "terms"
+                title:
+                  type: string
+                  example: "Terms & Conditions"
+                content:
+                  type: string
+                  example: "By using PrivcyAI, you agree to our terms of service..."
+
+    # Privacy Request Schemas
+    CreatePrivacyRequestBody:
+      type: object
+      required:
+        - company_id
+        - request_type
+      properties:
+        company_id:
+          type: string
+          format: uuid
+          description: UUID of the company to send the request to
+          example: "550e8400-e29b-41d4-a716-446655440001"
+        request_type:
+          type: string
+          enum: [access, delete_full, delete_partial_mandatory, delete_partial_select]
+          description: |
+            Type of privacy request:
+            - `access` — Subject Access Request
+            - `delete_full` — Full erasure request
+            - `delete_partial_mandatory` — Mandatory partial deletion
+            - `delete_partial_select` — User-selected partial deletion
+          example: "access"
+        selected_fields:
+          type: array
+          items:
+            type: string
+          description: Specific data fields to delete (only used with delete_partial_select)
+          example: ["email", "purchase_history"]
+        request_reference:
+          type: string
+          maxLength: 64
+          description: Optional client-side reference code
+          example: "REF-001"
+        description:
+          type: string
+          maxLength: 2000
+          description: Additional context or instructions for the company
+          example: "Please provide all personal data you hold about me."
+        regulation_type:
+          type: string
+          enum: [gdpr, dpdp]
+          description: Privacy regulation under which this request is made
+          example: "gdpr"
+
+    UpdatePrivacyRequestStatusBody:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [pending, in_progress, completed, rejected, cancelled, escalated]
+          description: New status for the privacy request
+          example: "completed"
+
+    UpdatePrivacyRequestResponseBody:
+      type: object
+      required:
+        - response_text
+      properties:
+        response_text:
+          type: string
+          maxLength: 5000
+          description: Text of the company's reply to record against the request
+          example: "We have received your request and will respond within 30 days as required by GDPR Article 12."
+
+    PrivacyRequestResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        company_id:
+          type: string
+          format: uuid
+        request_type:
+          type: string
+          enum: [access, delete_full, delete_partial_mandatory, delete_partial_select]
+        status:
+          type: string
+          enum: [pending, in_progress, completed, rejected, cancelled, escalated]
+        regulation_type:
+          type: string
+          enum: [gdpr, dpdp]
+        request_reference:
+          type: string
+          nullable: true
+        template_code:
+          type: string
+          nullable: true
+        rendered_subject:
+          type: string
+          nullable: true
+        rendered_body:
+          type: string
+          nullable: true
+        deadline_date:
+          type: string
+          format: date-time
+          nullable: true
+        sent_to_email:
+          type: string
+          nullable: true
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        response_summary:
+          type: string
+          nullable: true
+        response_stage:
+          type: string
+          nullable: true
+        requires_user_action:
+          type: boolean
+          example: false
+        action_description:
+          type: string
+          nullable: true
+        action_deadline:
+          type: string
+          format: date-time
+          nullable: true
+        company_reference_id:
+          type: string
+          nullable: true
+        request_hash:
+          type: string
+          nullable: true
+        response_received_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PrivacyRequestActivityResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Activity record UUID
+        privacy_request_id:
+          type: string
+          format: uuid
+        activity_type:
+          type: string
+          description: Type of activity (e.g. request_sent, reply_received, status_changed)
+          example: "request_sent"
+        description:
+          type: string
+          nullable: true
+        performed_by:
+          type: string
+          nullable: true
+          description: "user | system"
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    SyncRepliesResponse:
+      type: object
+      properties:
+        task_id:
+          type: string
+          description: Background task ID (empty when skipped)
+          example: "d99d98d2-54b3-4cd7-a165-f764578c39c4"
+        item_count:
+          type: integer
+          description: Number of replies found and queued for processing
+          example: 3
+        skipped:
+          type: boolean
+          description: True when sync was skipped (e.g. already in progress)
+          example: false
+        skip_reason:
+          type: string
+          description: Reason sync was skipped (only present when skipped=true)
+          example: "sync already in progress"
+
+    UserRequestStatsResponse:
+      type: object
+      properties:
+        total_requests:
+          type: integer
+          example: 12
+        pending_requests:
+          type: integer
+          example: 4
+        completed_requests:
+          type: integer
+          example: 7
+        rejected_requests:
+          type: integer
+          example: 1
+
+    # Assistant Feed Schemas
+    AssistantAction:
+      type: object
+      properties:
+        label:
+          type: string
+          description: Display label for the action button
+          example: "Escalate"
+        action:
+          type: string
+          description: Stable verb the client maps to an API call
+          enum: [escalate, view_request, review_requests, scan]
+          example: "escalate"
+        payload:
+          type: object
+          additionalProperties: true
+          description: Arguments the action call needs (e.g. request_id)
+          example:
+            request_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    AssistantMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Stable message identifier
+          example: "requires-action"
+        kind:
+          type: string
+          enum: [overdue, requires_action, reply, no_dsar, ok]
+          description: Message type — used by the client for icon/treatment
+          example: "requires_action"
+        priority:
+          type: integer
+          description: Sort order (higher = more urgent, shown first)
+          example: 80
+        text:
+          type: string
+          description: Human-readable message text
+          example: "3 of your requests need your review."
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssistantAction"
+
+    AssistantFeedResponse:
+      allOf:
+        - $ref: "#/components/schemas/BaseResponse"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                messages:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/AssistantMessage"
+
+    # Data Purge Schemas
+    PurgeResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Purge tracking record UUID
+        status:
+          type: string
+          enum: [pending, in_progress, completed, failed]
+          description: Overall purge status
+        store_postgres:
+          type: string
+          enum: [pending, in_progress, completed, failed]
+        store_s3:
+          type: string
+          enum: [pending, in_progress, completed, failed]
+        store_dynamo:
+          type: string
+          enum: [pending, in_progress, completed, failed]
+        store_qdrant:
+          type: string
+          enum: [pending, in_progress, completed, failed]
+        postgres_count:
+          type: integer
+          description: Records deleted from PostgreSQL
+          example: 142
+        s3_count:
+          type: integer
+          description: Objects deleted from S3
+          example: 18
+        dynamo_count:
+          type: integer
+          description: Items deleted from DynamoDB
+          example: 5
+        qdrant_count:
+          type: integer
+          description: Vectors deleted from Qdrant
+          example: 142
+        error:
+          type: string
+          nullable: true
+          description: Error message if purge failed
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT Bearer token authentication. Include the token in the Authorization header:
+        `Authorization: Bearer &lt;your-jwt-token&gt;`
+
+        **Token Requirements:**
+        - Must be a valid JWT token
+        - Token should include required claims (user_id, permissions, exp)
+        - Tokens expire after 24 hours
+        - Refresh tokens can be used to obtain new access tokens
+
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        API Key authentication for service-to-service communication.
+        Include your API key in the X-API-Key header.
+
+        **API Key Requirements:**
+        - Must be a valid API key registered in the system
+        - Keys are tied to specific applications/services
+        - Rate limits apply based on key tier
+
+  responses:
+    UnauthorizedError:
+      description: Authentication information is missing or invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            status: "nok"
+            error:
+              code: 401001
+              message: ["Authentication token is missing or invalid"]
+
+    ForbiddenError:
+      description: The request is forbidden due to insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            status: "nok"
+            error:
+              code: 403001
+              message: ["Insufficient permissions to access this resource"]
+
+    NotFoundError:
+      description: The requested resource was not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            status: "nok"
+            error:
+              code: 404001
+              message: ["The requested resource could not be found"]
+
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            status: "nok"
+            error:
+              code: 422001
+              message: ["Request validation failed"]
+
+    RateLimitError:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            status: "nok"
+            error:
+              code: 429001
+              message: ["Rate limit exceeded. Please try again later."]
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            status: "nok"
+            error:
+              code: 500001
+              message: ["An unexpected error occurred. Please try again later."]
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []

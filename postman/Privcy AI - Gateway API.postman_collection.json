@@ -1,0 +1,485 @@
+{
+        "info": {
+                "_postman_id": "d9d60995-c173-46ec-8590-3138f11f8854",
+                "name": "Privcy AI - Gateway API",
+                "description": "Complete API collection for Privcy AI Gateway. Switch between 'Dev' and 'Staging' environments to change base_url automatically.",
+                "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+                "_exporter_id": "28542575"
+        },
+        "item": [
+                {
+                        "name": "Health",
+                        "item": [
+                                {
+                                        "name": "Heart Beat",
+                                        "request": {
+                                                "method": "GET",
+                                                "header": [],
+                                                "url": {
+                                                        "raw": "{{base_url}}/heart-beat",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "heart-beat"
+                                                        ]
+                                                },
+                                                "description": "Health check endpoint"
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
+                        "name": "Authentication",
+                        "item": [
+                                {
+                                        "name": "Google Sign In",
+                                        "event": [
+                                                {
+                                                        "listen": "test",
+                                                        "script": {
+                                                                "exec": [
+                                                                        "if (pm.response.code === 200) {",
+                                                                        "    const response = pm.response.json();",
+                                                                        "    if (response.data && response.data.tokens) {",
+                                                                        "        if (response.data.tokens.accessToken) {",
+                                                                        "            pm.environment.set('access_token', response.data.tokens.accessToken);",
+                                                                        "            console.log('Access token saved to environment');",
+                                                                        "        }",
+                                                                        "        if (response.data.tokens.refreshToken) {",
+                                                                        "            pm.environment.set('refresh_token', response.data.tokens.refreshToken);",
+                                                                        "            console.log('Refresh token saved to environment');",
+                                                                        "        }",
+                                                                        "    }",
+                                                                        "    if (response.data && response.data.sync_status && response.data.sync_status.task_id) {",
+                                                                        "        pm.environment.set('task_id', response.data.sync_status.task_id);",
+                                                                        "        console.log('Task ID saved to environment');",
+                                                                        "    }",
+                                                                        "}"
+                                                                ],
+                                                                "type": "text/javascript"
+                                                        }
+                                                }
+                                        ],
+                                        "request": {
+                                                "auth": {
+                                                        "type": "noauth"
+                                                },
+                                                "method": "POST",
+                                                "header": [
+                                                        {
+                                                                "key": "Content-Type",
+                                                                "value": "application/json"
+                                                        }
+                                                ],
+                                                "body": {
+                                                        "mode": "raw",
+                                                        "raw": "{\n  \"serverAuthCode\": \"4/0ASc3gC338aKPBHzY__p1XPR6TyPIab8QLHw8EmZlDDgZKdNrxl1doUQYnVyIiDdjAVIT_g\",\n  \"metadata\": {\n    \"ip_address\": \"127.0.0.1\",\n    \"user_agent\": \"Postman\",\n    \"device_type\": \"desktop\",\n    \"device_name\": \"test-device\",\n    \"timestamp\": \"2025-11-18T22:07:00Z\"\n  }\n}"
+                                                },
+                                                "url": {
+                                                        "raw": "{{base_url}}/auth/google/signin",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "auth",
+                                                                "google",
+                                                                "signin"
+                                                        ]
+                                                },
+                                                "description": "Authenticate with Google OAuth"
+                                        },
+                                        "response": []
+                                },
+                                {
+                                        "name": "Refresh Token",
+                                        "request": {
+                                                "method": "POST",
+                                                "header": [
+                                                        {
+                                                                "key": "Content-Type",
+                                                                "value": "application/json"
+                                                        }
+                                                ],
+                                                "body": {
+                                                        "mode": "raw",
+                                                        "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+                                                },
+                                                "url": {
+                                                        "raw": "{{base_url}}/auth/refresh",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "auth",
+                                                                "refresh"
+                                                        ]
+                                                },
+                                                "description": "Refresh access token"
+                                        },
+                                        "response": [],
+                                        "event": [
+                                                {
+                                                        "listen": "test",
+                                                        "script": {
+                                                                "exec": [
+                                                                        "if (pm.response.code === 200) {",
+                                                                        "    const response = pm.response.json();",
+                                                                        "    if (response.data && response.data.tokens) {",
+                                                                        "        if (response.data.tokens.accessToken) {",
+                                                                        "            pm.environment.set('access_token', response.data.tokens.accessToken);",
+                                                                        "            console.log('Access token updated in environment');",
+                                                                        "        }",
+                                                                        "        if (response.data.tokens.refreshToken) {",
+                                                                        "            pm.environment.set('refresh_token', response.data.tokens.refreshToken);",
+                                                                        "            console.log('Refresh token updated in environment');",
+                                                                        "        }",
+                                                                        "    }",
+                                                                        "}"
+                                                                ],
+                                                                "type": "text/javascript"
+                                                        }
+                                                }
+                                        ]
+                                },
+                                {
+                                        "name": "Logout",
+                                        "request": {
+                                                "method": "POST",
+                                                "header": [],
+                                                "url": {
+                                                        "raw": "{{base_url}}/auth/logout",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "auth",
+                                                                "logout"
+                                                        ]
+                                                },
+                                                "description": "Logout and invalidate tokens"
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
+                        "name": "Users",
+                        "item": [
+                                {
+                                        "name": "Get User Profile",
+                                        "request": {
+                                                "method": "GET",
+                                                "header": [],
+                                                "url": {
+                                                        "raw": "{{base_url}}/users/ce298277-6884-407f-b864-cc59450b1c94",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "users",
+                                                                "ce298277-6884-407f-b864-cc59450b1c94"
+                                                        ]
+                                                },
+                                                "description": "Get user profile by ID"
+                                        },
+                                        "response": []
+                                },
+                                {
+                                        "name": "Update Onboarding Preferences",
+                                        "request": {
+                                                "method": "POST",
+                                                "header": [
+                                                        {
+                                                                "key": "Content-Type",
+                                                                "value": "application/json"
+                                                        }
+                                                ],
+                                                "body": {
+                                                        "mode": "raw",
+                                                        "raw": "{\n  \"allow_google_auth\": true,\n  \"is_business_identity\": true,\n  \"allow_scan_emails\": true,\n  \"periodic_email_scan\": true,\n  \"allow_dsar_request\": true,\n  \"allow_send_emails\": true,\n  \"track_replies\": true\n}"
+                                                },
+                                                "url": {
+                                                        "raw": "{{base_url}}/users/preferences/onboarding-consent",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "users",
+                                                                "preferences",
+                                                                "onboarding-consent"
+                                                        ]
+                                                },
+                                                "description": "Update user onboarding preferences"
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
+                        "name": "Sync Status",
+                        "item": [
+                                {
+                                        "name": "Get Sync Status",
+                                        "request": {
+                                                "method": "GET",
+                                                "header": [],
+                                                "url": {
+                                                        "raw": "{{base_url}}/sync/status",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "sync",
+                                                                "status"
+                                                        ]
+                                                },
+                                                "description": "Returns is_running (bool) and last_sync_date at root. When is_running=true, job details are nested under the 'job' field."
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
+                        "name": "Data Maps",
+                        "item": [
+                                {
+                                        "name": "Get Data Maps",
+                                        "request": {
+                                                "method": "GET",
+                                                "header": [],
+                                                "url": {
+                                                        "raw": "{{base_url}}/data-maps?limit=50&cursor=",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "data-maps"
+                                                        ],
+                                                        "query": [
+                                                                {
+                                                                        "key": "limit",
+                                                                        "value": "50"
+                                                                },
+                                                                {
+                                                                        "key": "cursor",
+                                                                        "value": ""
+                                                                }
+                                                        ]
+                                                },
+                                                "description": "Get data maps with pagination"
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
+                        "name": "Insights",
+                        "item": [
+                                {
+                                        "name": "Get Insights",
+                                        "request": {
+                                                "method": "GET",
+                                                "header": [],
+                                                "url": {
+                                                        "raw": "{{base_url}}/insights",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "insights"
+                                                        ]
+                                                },
+                                                "description": "Get privacy insights dashboard"
+                                        },
+                                        "response": []
+                                },
+                                {
+                                        "name": "Set Weekly Notification",
+                                        "request": {
+                                                "method": "PATCH",
+                                                "header": [],
+                                                "url": {
+                                                        "raw": "{{base_url}}/insights?notification=true",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "insights"
+                                                        ],
+                                                        "query": [
+                                                                {
+                                                                        "key": "notification",
+                                                                        "value": "true"
+                                                                }
+                                                        ]
+                                                },
+                                                "description": "Set weekly notification preference"
+                                        },
+                                        "response": []
+                                },
+                                {
+                                        "name": "Accept or Decline Reclaim",
+                                        "request": {
+                                                "method": "PUT",
+                                                "header": [
+                                                        {
+                                                                "key": "Content-Type",
+                                                                "value": "application/json"
+                                                        }
+                                                ],
+                                                "body": {
+                                                        "mode": "raw",
+                                                        "raw": "{\n  \"action\": \"accept\",\n  \"company_id\": \"company-uuid\"\n}"
+                                                },
+                                                "url": {
+                                                        "raw": "{{base_url}}/insights",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "insights"
+                                                        ]
+                                                },
+                                                "description": "Accept or decline reclaim request"
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
+                        "name": "Companies",
+                        "item": [
+                                {
+                                        "name": "Get All Companies",
+                                        "request": {
+                                                "method": "GET",
+                                                "header": [],
+                                                "url": {
+                                                        "raw": "{{base_url}}/companies",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "companies"
+                                                        ]
+                                                },
+                                                "description": "Get all company details"
+                                        },
+                                        "response": []
+                                },
+                                {
+                                        "name": "Get Company Request Details",
+                                        "request": {
+                                                "method": "GET",
+                                                "header": [],
+                                                "url": {
+                                                        "raw": "{{base_url}}/companies/company-uuid",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "companies",
+                                                                "company-uuid"
+                                                        ]
+                                                },
+                                                "description": "Get request details for specific company"
+                                        },
+                                        "response": []
+                                },
+                                {
+                                        "name": "Complete Company Request",
+                                        "request": {
+                                                "method": "POST",
+                                                "header": [
+                                                        {
+                                                                "key": "Content-Type",
+                                                                "value": "application/json"
+                                                        }
+                                                ],
+                                                "body": {
+                                                        "mode": "raw",
+                                                        "raw": "{\n  \"notes\": \"Request completed successfully\"\n}"
+                                                },
+                                                "url": {
+                                                        "raw": "{{base_url}}/companies/company-uuid/complete",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "companies",
+                                                                "company-uuid",
+                                                                "complete"
+                                                        ]
+                                                },
+                                                "description": "Mark company request as completed"
+                                        },
+                                        "response": []
+                                },
+                                {
+                                        "name": "Escalate Company Request",
+                                        "request": {
+                                                "method": "POST",
+                                                "header": [
+                                                        {
+                                                                "key": "Content-Type",
+                                                                "value": "application/json"
+                                                        }
+                                                ],
+                                                "body": {
+                                                        "mode": "raw",
+                                                        "raw": "{\n  \"reason\": \"Requires legal review\"\n}"
+                                                },
+                                                "url": {
+                                                        "raw": "{{base_url}}/companies/company-uuid/escalate",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "companies",
+                                                                "company-uuid",
+                                                                "escalate"
+                                                        ]
+                                                },
+                                                "description": "Escalate company request"
+                                        },
+                                        "response": []
+                                }
+                        ]
+                },
+                {
+                        "name": "FAQs",
+                        "item": [
+                                {
+                                        "name": "Get FAQs",
+                                        "request": {
+                                                "method": "GET",
+                                                "header": [],
+                                                "url": {
+                                                        "raw": "{{base_url}}/faqs",
+                                                        "host": [
+                                                                "{{base_url}}"
+                                                        ],
+                                                        "path": [
+                                                                "faqs"
+                                                        ]
+                                                },
+                                                "description": "Get all FAQs"
+                                        },
+                                        "response": []
+                                }
+                        ]
+                }
+        ],
+        "auth": {
+                "type": "bearer",
+                "bearer": [
+                        {
+                                "key": "token",
+                                "value": "{{access_token}}",
+                                "type": "string"
+                        }
+                ]
+        }
+}
