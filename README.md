@@ -6,13 +6,13 @@ Interactive Swagger UI for the Privcy AI BFF API, with Postman collections for m
 
 Once GitHub Pages is enabled, the docs are published at:
 
-**https://rayblaze-global.github.io/privcy-ai-api-docs/**
+**https://nithin-al.github.io/privcy-doc/**
 
 Pushes to `main` automatically redeploy the site via GitHub Actions.
 
 ### One-time GitHub setup
 
-1. Open the repository on GitHub: [Rayblaze-Global/privcy-ai-api-docs](https://github.com/Rayblaze-Global/privcy-ai-api-docs)
+1. Open the repository on GitHub: [nithin-al/privcy-doc](https://github.com/nithin-al/privcy-doc)
 2. Go to **Settings → Pages**
 3. Under **Build and deployment**, set **Source** to **GitHub Actions**
 4. Push these changes to `main` (or re-run the **Deploy API Docs to GitHub Pages** workflow from the Actions tab)
@@ -20,7 +20,7 @@ Pushes to `main` automatically redeploy the site via GitHub Actions.
 ## Local Development
 
 ```bash
-cd privcy-ai-api-docs
+cd privcy-doc
 docker compose up --build -d
 ```
 
